@@ -9,10 +9,12 @@ from pad.common import dungeon_types, pad_util
 from pad.common.shared_types import MonsterId, DungeonId
 from pad.raw import Dungeon
 from pad.raw.dungeon import SubDungeon
+from pad.raw.skills import skill_text_typing
 from pad.raw.skills.active_skill_info import ActiveSkill
 from pad.raw.skills.en_active_skill_text import EnAsTextConverter
 from pad.raw.skills.en_leader_skill_text import EnLsTextConverter
 from pad.raw.skills.leader_skill_info import LeaderSkill
+from pad.raw.skills.skill_text_typing import AsCondition, LsCondition
 from pad.raw_processor.merged_data import MergedCard
 from pad.raw_processor.merged_database import Database
 
@@ -244,6 +246,9 @@ class CrossServerSkill(object):
         self.na_skill = na_skill
         self.kr_skill = kr_skill
 
+        self.en_text = None
+        self.skill_type_tags = []  # type: List[Union[LsCondition, AsCondition]]
+
 
 def build_cross_server_skills(jp_skills: List[EitherSkillType],
                               na_skills: List[EitherSkillType],
@@ -296,9 +301,21 @@ class CrossServerDatabase(object):
                                                        na_database.leader_skills,
                                                        kr_database.leader_skills)
 
+        ls_converter = EnLsTextConverter()
+        for ls in self.leader_skills:
+            ls.en_text = ls.jp_skill.full_text(ls_converter)
+            ls.skill_type_tags = list(skill_text_typing.parse_ls_conditions(ls.en_text))
+            ls.skill_type_tags.sort(key=lambda x: x.value)
+
         self.active_skills = build_cross_server_skills(jp_database.active_skills,
                                                        na_database.active_skills,
                                                        kr_database.active_skills)
+
+        as_converter = EnAsTextConverter()
+        for ask in self.active_skills:
+            ask.en_text = ask.jp_skill.full_text(as_converter)
+            ask.skill_type_tags = list(skill_text_typing.parse_as_conditions(ask.en_text))
+            ask.skill_type_tags.sort(key=lambda x: x.value)
 
         self.dungeons = build_cross_server_dungeons(jp_database,
                                                     na_database,
@@ -346,12 +363,14 @@ class CrossServerDatabase(object):
 
     def save(self, output_dir: str, file_name: str, obj: object, pretty: bool):
         output_file = os.path.join(output_dir, '{}.json'.format(file_name))
-        with open(output_file, 'w') as f:
+        with open(output_file, 'w', encoding='utf-8') as f:
             pad_util.json_file_dump(obj, f, pretty)
 
     def save_all(self, output_dir: str, pretty: bool):
         self.save(output_dir, 'all_cards', self.all_cards, pretty)
         self.save(output_dir, 'dungeons', self.dungeons, pretty)
+        self.save(output_dir, 'active_skills', self.active_skills, pretty)
+        self.save(output_dir, 'leader_skills', self.leader_skills, pretty)
         self.save(output_dir, 'jp_bonuses', self.jp_bonuses, pretty)
         self.save(output_dir, 'na_bonuses', self.na_bonuses, pretty)
         self.save(output_dir, 'kr_bonuses', self.kr_bonuses, pretty)

@@ -1,26 +1,30 @@
 import logging
 
 from pad.db.db_util import DbWrapper
-from pad.db.sql_item import SimpleSqlItem
 from pad.storage.awoken_skill import AwokenSkill
 from pad.storage.dungeon import Dungeon, SubDungeon
+from pad.storage.encounter import Encounter
 from pad.storage.monster import Monster, ActiveSkill, LeaderSkill, Awakening, Evolution
 from pad.storage.rank_reward import RankReward
 from pad.storage.schedule import ScheduleEvent
+from pad.storage.skill_tag import ActiveSkillTag, LeaderSkillTag
 
 logger = logging.getLogger('processor')
 
 _UPDATE_TABLES = [
-    AwokenSkill.TABLE,
-    Monster.TABLE,
     ActiveSkill.TABLE,
-    LeaderSkill.TABLE,
+    ActiveSkillTag.TABLE,
     Awakening.TABLE,
-    Evolution.TABLE,
+    AwokenSkill.TABLE,
     Dungeon.TABLE,
-    SubDungeon.TABLE,
-    ScheduleEvent.TABLE,
+    Encounter.TABLE,
+    Evolution.TABLE,
+    LeaderSkill.TABLE,
+    LeaderSkillTag.TABLE,
+    Monster.TABLE,
     RankReward.TABLE,
+    ScheduleEvent.TABLE,
+    SubDungeon.TABLE,
 ]
 
 
