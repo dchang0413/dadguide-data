@@ -5,10 +5,10 @@ from pad.common.shared_types import Server, MonsterId, MonsterNo, EvolutionType
 from pad.db import sql_item
 from pad.db.sql_item import SimpleSqlItem, ExistsStrategy
 from pad.raw.skills import skill_text_typing
-from pad.raw.skills.active_skill_info import ActiveSkill as RawActiveSkill
-from pad.raw.skills.en_active_skill_text import EnAsTextConverter
-from pad.raw.skills.en_leader_skill_text import EnLsTextConverter
-from pad.raw.skills.leader_skill_info import LeaderSkill as RawLeaderSkill
+from pad.raw.skills.en.active_skill_text import EnASTextConverter
+from pad.raw.skills.en.leader_skill_text import EnLSTextConverter
+from pad.raw.skills.jp.active_skill_text import JpASTextConverter
+from pad.raw.skills.jp.leader_skill_text import JpLSTextConverter
 from pad.raw_processor.crossed_data import CrossServerCard, CrossServerSkill
 from pad.storage.series import Series
 
@@ -33,6 +33,7 @@ class Monster(SimpleSqlItem):
         orb_skin_id = jp_card.orb_skin_id or None
         voice_id_jp = jp_card.voice_id or None if o.jp_card.server == Server.jp else None
         voice_id_na = na_card.voice_id or None if o.na_card.server == Server.na else None
+        linked_monster_id = o.jp_card.linked_monster_id or o.na_card.linked_monster_id
 
         def none_or(value: int):
             return value if value > -1 else None
@@ -81,7 +82,8 @@ class Monster(SimpleSqlItem):
             series_id=Series.UNSORTED_SERIES_ID,
             orb_skin_id=orb_skin_id,
             voice_id_jp=voice_id_jp,
-            voice_id_na=voice_id_na)
+            voice_id_na=voice_id_na,
+            linked_monster_id=linked_monster_id)
 
     def __init__(self,
                  monster_id: int = None,
@@ -128,6 +130,7 @@ class Monster(SimpleSqlItem):
                  orb_skin_id: int = None,
                  voice_id_jp: int = None,
                  voice_id_na: int = None,
+                 linked_monster_id: int = None,
                  tstamp: int = None):
         self.monster_id = monster_id
         self.monster_no_jp = monster_no_jp
@@ -175,6 +178,7 @@ class Monster(SimpleSqlItem):
         self.orb_skin_id = orb_skin_id
         self.voice_id_jp = voice_id_jp
         self.voice_id_na = voice_id_na
+        self.linked_monster_id = linked_monster_id
         self.tstamp = tstamp
 
     def _non_auto_update_cols(self):
@@ -227,6 +231,21 @@ class MonsterWithExtraImageInfo(SimpleSqlItem):
     def __str__(self):
         return 'MonsterImage({}): animated={} hq={}'.format(self.key_value(), self.has_animation, self.has_hqimage)
 
+class MonsterWithMPValue(SimpleSqlItem):
+    """Monster helper for inserting MP purchase."""
+    TABLE = 'monsters'
+    KEY_COL = 'monster_id'
+
+    def __init__(self,
+                 monster_id: int = None,
+                 buy_mp: int = None,
+                 tstamp: int = None):
+        self.monster_id = monster_id
+        self.buy_mp = buy_mp
+        self.tstamp = tstamp
+
+    def __str__(self):
+        return 'MonsterMP({}): {}'.format(self.key_value(), self.buy_mp)
 
 class ActiveSkill(SimpleSqlItem):
     """Monster active skill."""
@@ -239,8 +258,14 @@ class ActiveSkill(SimpleSqlItem):
         na_skill = css.na_skill
         kr_skill = css.kr_skill
 
-        na_description = css.en_text
-        tags = skill_text_typing.format_conditions(css.skill_type_tags)
+        jp_as_converter = JpASTextConverter()
+        jp_description = jp_skill.full_text(jp_as_converter)
+
+        en_as_converter = EnASTextConverter()
+        na_description = jp_skill.full_text(en_as_converter)
+
+        skill_type_tags = skill_text_typing.parse_as_conditions(css)
+        tags = skill_text_typing.format_conditions(skill_type_tags)
 
         # In the event that we don't have KR data, use the NA name and calculated description.
         kr_name = kr_skill.name if jp_skill != kr_skill else na_skill.name
@@ -251,7 +276,7 @@ class ActiveSkill(SimpleSqlItem):
             name_jp=jp_skill.name,
             name_na=na_skill.name,
             name_kr=kr_name,
-            desc_jp=jp_skill.raw_description,
+            desc_jp=jp_description,
             desc_na=na_description,
             desc_kr=kr_desc,
             turn_max=jp_skill.turn_max,
@@ -297,8 +322,12 @@ class LeaderSkill(SimpleSqlItem):
         na_skill = css.na_skill
         kr_skill = css.kr_skill
 
-        na_description = css.en_text
-        tags = skill_text_typing.format_conditions(css.skill_type_tags)
+        en_ls_converter = EnLSTextConverter()
+        jp_ls_converter = JpLSTextConverter()
+        na_description = jp_skill.full_text(en_ls_converter) or na_skill.raw_description
+        jp_description = jp_skill.full_text(jp_ls_converter) or jp_skill.raw_description
+        skill_type_tags = skill_text_typing.parse_ls_conditions(css)
+        tags = skill_text_typing.format_conditions(skill_type_tags)
 
         # In the event that we don't have KR data, use the NA name and calculated description.
         kr_name = kr_skill.name if jp_skill != kr_skill else na_skill.name
@@ -309,7 +338,7 @@ class LeaderSkill(SimpleSqlItem):
             name_jp=jp_skill.name,
             name_na=na_skill.name,
             name_kr=kr_name,
-            desc_jp=jp_skill.raw_description,
+            desc_jp=jp_description,
             desc_na=na_description,
             desc_kr=kr_desc,
             max_hp=jp_skill.hp,

@@ -4,6 +4,7 @@ import random
 from typing import Callable
 
 import pymysql
+from pymysql import InterfaceError
 
 from pad.common import pad_util
 from .sql_item import SqlItem, _col_compare, _tbl_name_ref, _process_col_mappings, ExistsStrategy
@@ -30,7 +31,11 @@ class DbWrapper(object):
 
     def execute(self, cursor, sql):
         logger.debug('Executing: %s', sql)
-        return cursor.execute(sql)
+        try:
+            return cursor.execute(sql)
+        except InterfaceError:
+            self.connection.ping()
+            return cursor.execute(sql)
 
     def fetch_data(self, sql):
         with self.connection.cursor() as cursor:
@@ -72,7 +77,13 @@ class DbWrapper(object):
             row = data[0]
             if len(row.values()) > 1:
                 raise ValueError('too many columns in result:', sql)
-            return op(list(row.values())[0])
+            result_value = list(row.values())[0]
+            if result_value is None:
+                if fail_on_empty:
+                    raise ValueError('got null result:', sql)
+                else:
+                    return None
+            return op(result_value)
 
     def load_single_object(self, obj_type, key_val):
         sql = 'SELECT * FROM {} WHERE {}'.format(
@@ -138,7 +149,7 @@ class DbWrapper(object):
             if num_rows > 0:
                 raise ValueError('got too many results for update:', num_rows, sql)
             return cursor.rowcount
-
+    
     def insert_or_update(self, item: SqlItem, force_insert=False):
         try:
             return self._insert_or_update(item, force_insert=force_insert)
@@ -147,7 +158,6 @@ class DbWrapper(object):
             raise ex
 
     def _insert_or_update(self, item: SqlItem, force_insert: bool):
-        item_type = type(item)
         key = item.key_value()
 
         if force_insert:
@@ -164,6 +174,15 @@ class DbWrapper(object):
                 self.insert_item(item.insert_sql())
             elif not self.check_existing(item.needs_update_sql()):
                 logger.info('item needed update: %s', item)
+                self.insert_item(item.update_sql())
+
+        elif item.exists_strategy() == ExistsStrategy.BY_KEY_IF_SET:
+            if not key:
+                key = self.insert_item(item.insert_sql())
+                item.set_key_value(key)
+                logger.info('item needed by-key insert: %s', item)
+            elif not self.check_existing(item.needs_update_sql()):
+                logger.info('item needed by-key update: %s', item)
                 self.insert_item(item.update_sql())
 
         elif item.exists_strategy() == ExistsStrategy.BY_VALUE:

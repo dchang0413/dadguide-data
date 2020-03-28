@@ -3,7 +3,8 @@ import time
 from typing import List
 
 from enum import Enum
-
+from pad.raw.skills.active_skill_info import *
+from pad.raw.skills.leader_skill_info import *
 
 # Values here are used to compose the skill_data_list -> type_data field, which
 # is a field formatted via the values in the condition enums, csv, encased
@@ -19,7 +20,7 @@ from enum import Enum
 #
 # Other fields in skill_data_list are useful, they populate the visual
 # effect for a skill. Not populating those yet.
-class AsCondition(Enum):
+class ASCondition(Enum):
     ETC = 999
 
     ENHANCED_ORBS = 2
@@ -68,9 +69,9 @@ class AsCondition(Enum):
     VOID_SKYFALLS = 260
     ORB_LOCK = 270
     COMBO_ROOT = 280
+    REDUCE_MATCH_RESTRICTION = 281
 
-
-class LsCondition(Enum):
+class LSCondition(Enum):
     AUTO_HEAL = 1
     ENHANCED_HP = 25
     ENHANCED_ATK = 26
@@ -92,255 +93,263 @@ class LsCondition(Enum):
     NO_SKYFALL_COMBOS = 210
     ETC = 999
 
+ASCondition.__cmp__ = lambda s, o: cmp(s.value, o.value)
+LSCondition.__cmp__ = lambda s, o: cmp(s.value, o.value)
 
 def format_conditions(skill_conditions):
     sorted_cond_values = sorted([x.value for x in skill_conditions])
     return ','.join(['({})'.format(x) for x in sorted_cond_values])
 
 
-def parse_as_conditions(skill_text: str) -> List[AsCondition]:
+def parse_as_conditions(skill, child = False) -> List[ASCondition]:
     """Takes the processor-generated active skill text and produces a list of conditions."""
-    skill_text = skill_text.lower()
+    if not child:
+        skill = skill.jp_skill
     results = set()
 
-    if 'activate a random skill' in skill_text:
-        results.add(AsCondition.ETC)
-
-    if 'enhance all' in skill_text:
-        results.add(AsCondition.ENHANCED_ORBS)
-
-    for part in skill_text.split(';'):
-        atk_match = re.match('(.*)x atk(.*)', part)
-        # Filter out 'Deal 20x ATK Wood' and 'Poison all enemies (1x ATK)'
-        if atk_match and 'deal' not in atk_match.group(1) and not atk_match.group(2).startswith(')'):
-            results.add(AsCondition.ENHANCED_ATTACK)
-
-    if "reduce enemies' defense" in skill_text:
-        results.add(AsCondition.REDUCE_DEFENSE)
-
-    if "reduce enemies' hp" in skill_text:
-        results.add(AsCondition.GRAVITY)
-
-    colors = ['fire', 'water', 'wood', 'light', 'dark']
-    if any(['heal orbs to {} orbs'.format(x) in skill_text for x in colors]):
-        results.add(AsCondition.ATTACK_STANCE)
-
-    if 'to heal orbs' in skill_text:
-        results.add(AsCondition.GUARD_STANCE)
-
-    if 'delay enemies' in skill_text:
-        results.add(AsCondition.MENACE)
-
-    if 'freely move orbs' in skill_text:
-        results.add(AsCondition.STOP_TIME)
-
-    if 'reduce damage taken by 100%' in skill_text:
-        results.add(AsCondition.VOID_DAMAGE)
-    elif 'reduce damage taken' in skill_text:
-        results.add(AsCondition.REDUCE_DAMAGE)
-
-    if 'void all' in skill_text:
-        results.add(AsCondition.VOID_DAMAGE)
-
-    if 'poison all enemies' in skill_text:
-        results.add(AsCondition.POISON)
-
-    if 'counterattack' in skill_text:
-        results.add(AsCondition.COUNTERATTACK)
-
-    if 'depending on hp level' in skill_text:
-        results.add(AsCondition.GRUDGE_STRIKE)
-
-    if 'orbs at random' in skill_text:
-        results.add(AsCondition.ORB_CONVERT)
-
-    all_colors = colors + ['heal', 'poison', 'mortal poison', 'jammer']
-    if any(['change {} orbs'.format(x) in skill_text for x in all_colors]):
-        results.add(AsCondition.ORB_CONVERT)
-    if any(['change {}, '.format(x) in skill_text for x in all_colors]):
-        results.add(AsCondition.ORB_CONVERT)
-
-    skill_mod = re.sub(r'0[.]\d+x', ' ', skill_text)
-    if 'x rcv' in skill_mod:
-        results.add(AsCondition.ENHANCED_HEAL)
-
-    if 'becomes team leader' in skill_text:
-        results.add(AsCondition.THE_SWITCH)
-
-    if 'become mass attack' in skill_text:
-        results.add(AsCondition.ATTACK_CHANGER)
-
-    if re.match('.*change.*orbs to.*;.*change.*orbs to.*', skill_text):
-        results.add(AsCondition.DOUBLE_ORBS_CONVERT)
-
-    if 'change all orbs' in skill_text:
-        results.add(AsCondition.ALL_ORBS_CONVERT)
-
-    if 'reduce hp' in skill_text:
-        results.add(AsCondition.SUICIDE)
-
-    awoken_recovery = 'awoken skill binds' in skill_text
-    bind_recovery = 'remove all binds' in skill_text or 'reduce binds' in skill_text
-    heal = 'recover' in skill_text and 'damage to an enemy and recover' not in skill_text
-
-    if heal:
-        results.add(AsCondition.HEAL)
-    if bind_recovery:
-        results.add(AsCondition.RECOVER_BIND)
-    if heal and bind_recovery:
-        results.add(AsCondition.HEAL_BIND_RECOVERY)
-    if awoken_recovery:
-        results.add(AsCondition.AWOKEN_INVALID_RECOVERY)
-    if bind_recovery and awoken_recovery:
-        results.add(AsCondition.BIND_AWOKEN_INVALID_RECOVERY)
-
-    if 'are more likely to appear' in skill_text:
-        results.add(AsCondition.DROP_CHANCE)
-
-    if 'damage to an enemy and recover' in skill_text:
-        results.add(AsCondition.ATTACK_AND_HEAL)
-    elif 'fixed damage to' in skill_text:
-        results.add(AsCondition.FIXED_DAMAGE)
-    elif 'damage to an enemy' in skill_text or 'atk to an enemy' in skill_text:
-        results.add(AsCondition.SINGLE_TARGET_ATTACK)
-    elif 'damage to all enemies' in skill_text or 'atk to all enemies' in skill_text:
-        results.add(AsCondition.MASSIVE_ATTACK)
-    elif any(['damage to all {} att'.format(x) in skill_text for x in colors]):
-        results.add(AsCondition.ATTRIBUTE_ATTACK)
-
-    if 'column to' in skill_text or 'row to' in skill_text:
-        results.add(AsCondition.LINE_ORBS_CONVERTER)
-
-    if 'increase orb move time' in skill_text:
-        results.add(AsCondition.EXTENDS_TIME)
-    if re.match('.*\dx orb move time.*', skill_text):
-        results.add(AsCondition.EXTENDS_TIME)
-
-    if 'change own att' in skill_text:
-        results.add(AsCondition.CHANGE_ATTRIBUTE)
-
-    if 'charge allies' in skill_text:
-        results.add(AsCondition.REDUCE_SKILL_TURN)
-
-    if 'replace all orbs' in skill_text:
-        results.add(AsCondition.ORB_REFRESH)
-
-    if 'change all enemies to' in skill_text:
-        results.add(AsCondition.CHANGE_ENEMIES_ATTRIBUTE)
-
-    if 'increase combo count' in skill_text:
-        results.add(AsCondition.ADD_COMBO)
-
-    if 'enemies max hp' in skill_text:
-        results.add(AsCondition.NEW_GRAVITY)
-
-    if 'unlock' in skill_text:
-        results.add(AsCondition.REMOVE_LOCK)
-
-    if 'damage absorb shield' in skill_text:
-        results.add(AsCondition.VOID_DAMAGE_ABSORBS)
-
-    if 'att. absorb shield' in skill_text:
-        results.add(AsCondition.VOID_ATT_ABSORBS)
-
-    if 'no skyfall' in skill_text:
-        results.add(AsCondition.VOID_SKYFALLS)
-
-    if ' lock ' in skill_text:
-        results.add(AsCondition.ORB_LOCK)
-
-    if 'show path to' in skill_text:
-        results.add(AsCondition.COMBO_ROOT)
-
-    return results
+    if isinstance(skill, ASMultiPartSkill):
+        for s in skill.parts:
+            results |= parse_as_conditions(s, True)
+        if len([s for s in skill.parts if isinstance(s, (ASOneAttrtoOneAttr,
+                                                         ASTwoAttrtoOneTwoAttr, 
+                                                         ASThreeAttrtoOneAttr))]) >= 2:
+            results.add(ASCondition.DOUBLE_ORBS_CONVERT)
 
 
-def parse_ls_conditions(skill_text: str) -> List[LsCondition]:
+    if isinstance(skill, ASRandomSkill):
+        results.add(ASCondition.ETC)
+        for s in skill.random_skills:
+            results |= parse_as_conditions(s, True)
+
+    if isinstance(skill, (ASOrbEnhance, ASBicolorOrbEnhance, ASOrbEnhanceNew)):
+        results.add(ASCondition.ENHANCED_ORBS)
+
+    if isinstance(skill, (ASAttrBurst, ASAttrBurstMultiPart)):
+        if skill.attributes:
+            results.add(ASCondition.ENHANCED_ATTACK)
+        if skill.rcv_boost and skill.multiplier >= 1:
+            results.add(ASCondition.ENHANCED_HEAL)
+
+    if isinstance(skill, (ASTypeBurst, ASTypeBurstNew)):
+        results.add(ASCondition.ENHANCED_ATTACK)
+
+    if isinstance(skill, ASDefenseBreak):
+        results.add(ASCondition.REDUCE_DEFENSE)
+
+    if isinstance(skill, ASGravity):
+        results.add(ASCondition.GRAVITY)
+
+    if isinstance(skill, (ASOneAttrtoOneAttr, ASTwoAttrtoOneTwoAttr,  ASThreeAttrtoOneAttr)):
+        results.add(ASCondition.ORB_CONVERT)
+        if 5 in skill.from_attr:
+            results.add(ASCondition.ATTACK_STANCE)
+        if 5 in skill.to_attr:
+            results.add(ASCondition.GUARD_STANCE)
+
+    if isinstance(skill, ASDelay):
+        results.add(ASCondition.MENACE)
+
+    if isinstance(skill, ASFreeOrbMovement):
+        results.add(ASCondition.STOP_TIME)
+
+    if isinstance(skill, (ASDamageReduction, ASDamageVoid)):
+        if skill.shield == 1:
+            results.add(ASCondition.VOID_DAMAGE)
+        else:
+            results.add(ASCondition.REDUCE_DAMAGE)
+
+    if isinstance(skill, (ASAwokenSkillBurst, ASAwokenSkillBurst2)):
+        if skill.toggle == 1:
+            results.add(ASCondition.ENHANCED_HEAL)
+        elif skill.toggle in [0,2]:
+            results.add(ASCondition.ENHANCED_ATTACK)
+        elif skill.toggle == 3:
+            results.add(ASCondition.REDUCE_DAMAGE)
+
+    if isinstance(skill, ASPoisonEnemies):
+        results.add(ASCondition.POISON)
+
+    if isinstance(skill, ASCounterattack):
+        results.add(ASCondition.COUNTERATTACK)
+
+    if isinstance(skill, ASLowHpConditionalAttrDamageBoost):
+        results.add(ASCondition.GRUDGE_STRIKE)
+
+    if isinstance(skill, ASLeaderSwap):
+        results.add(ASCondition.THE_SWITCH)
+
+    if isinstance(skill, ASMassAttack):
+        results.add(ASCondition.ATTACK_CHANGER)
+
+    if isinstance(skill, ASTwoAttrtoOneTwoAttr):
+        if len(skill.to_attr) > 1:
+            results.add(ASCondition.DOUBLE_ORBS_CONVERT)
+
+    if isinstance(skill, (ASBoardChange, ASShowComboPath)):
+        results.add(ASCondition.ALL_ORBS_CONVERT)
+    if isinstance(skill, ASThreeAttrtoOneAttr):
+        if skill.from_attr == list(range(10)):
+            results.add(ASCondition.ALL_ORBS_CONVERT)
+
+    if isinstance(skill, (ASHpConditionalTargetNuke, ASHpConditionalMassNuke, 
+                          ASTargetNukeWithHpPenalty, ASMassNukeWithHpPenalty, 
+                          ASSuicide195)):
+        results.add(ASCondition.SUICIDE)
+
+    if isinstance(skill, (ASHpRecovery, ASHpRecoverFromRcv, ASHpRecoverStatic, ASHpRecoveryandBindClear)):
+        if any([getattr(skill,'hp',0),
+                getattr(skill,'rcv_multiplier_as_hp',0),
+                getattr(skill,'percentage_max_hp',0),
+                getattr(skill,'team_rcv_multiplier_as_hp',0)]):
+            results.add(ASCondition.HEAL)
+    if isinstance(skill, ASAutoHealConvert):
+        if skill.duration:
+            results.add(ASCondition.HEAL)
+    if isinstance(skill, (ASAutoHealConvert, ASHpRecoveryandBindClear)):
+        if skill.card_bind:
+            results.add(ASCondition.RECOVER_BIND)
+        if skill.awoken_bind:
+            results.add(ASCondition.AWOKEN_INVALID_RECOVERY)
+
+    if ASCondition.RECOVER_BIND in results and ASCondition.AWOKEN_INVALID_RECOVERY in results:
+        results.add(ASCondition.BIND_AWOKEN_INVALID_RECOVERY)
+    if ASCondition.RECOVER_BIND in results and ASCondition.HEAL in results:
+        results.add(ASCondition.HEAL_BIND_RECOVERY)
+
+    if isinstance(skill, ASIncreasedSkyfallChance):
+        results.add(ASCondition.DROP_CHANCE)
+
+    if isinstance(skill, (ASMiniNukeandHpRecovery, ASAtkBasedNuke)):
+        results.add(ASCondition.ATTACK_AND_HEAL)
+
+    if isinstance(skill, (ASTrueDamageNuke, ASTrueDamageNukeAll, ASMultiLaserConvert)):
+        results.add(ASCondition.FIXED_DAMAGE)
+
+    if hasattr(skill, 'mass_attack'):
+        if skill.mass_attack:
+            results.add(ASCondition.MASSIVE_ATTACK)
+        else:
+            results.add(ASCondition.SINGLE_TARGET_ATTACK)
+    
+    if isinstance(skill, ASAttrOnAttrNuke):
+        results.add(ASCondition.ATTRIBUTE_ATTACK)
+
+    if isinstance(skill, (ASColumnOrbChange, ASRowOrbChange)):
+        results.add(ASCondition.LINE_ORBS_CONVERTER)
+
+    if isinstance(skill, ASIncreasedOrbMovementTime):
+        results.add(ASCondition.EXTENDS_TIME)
+
+    if isinstance(skill, ASAttributeChange):
+        results.add(ASCondition.CHANGE_ATTRIBUTE)
+
+    if isinstance(skill, ASHaste):
+        results.add(ASCondition.REDUCE_SKILL_TURN)
+
+    if isinstance(skill, ASOrbRefresh):
+        results.add(ASCondition.ORB_REFRESH)
+
+    if isinstance(skill, ASEnemyAttrChange):
+        results.add(ASCondition.CHANGE_ENEMIES_ATTRIBUTE)
+
+    if isinstance(skill, ASAddAdditionalCombos):
+        results.add(ASCondition.ADD_COMBO)
+
+    if isinstance(skill, ASTrueGravity):
+        results.add(ASCondition.NEW_GRAVITY)
+
+    if isinstance(skill, (ASOrbLockRemoval, ASShowComboPath)):
+        results.add(ASCondition.REMOVE_LOCK)
+
+    if isinstance(skill, ASVoidDamageAbsorption):
+        if skill.damage_absorb:
+            results.add(ASCondition.VOID_DAMAGE_ABSORBS)
+        if skill.attribute_absorb:
+            results.add(ASCondition.VOID_ATT_ABSORBS)
+
+    if isinstance(skill, ASNoSkyfallForXTurns):
+        results.add(ASCondition.VOID_SKYFALLS)
+
+    if isinstance(skill, ASOrbLock):
+        results.add(ASCondition.ORB_LOCK)
+
+    if isinstance(skill, ASShowComboPath):
+        results.add(ASCondition.COMBO_ROOT)
+
+    if isinstance(skill, ASReduceDisableMatch):
+        results.add(ASCondition.REDUCE_MATCH_RESTRICTION)
+        
+    if child:
+        return results
+    return sorted(results, key=lambda x:x.value)
+
+
+def parse_ls_conditions(skill, child = False) -> List[LSCondition]:
     """Takes the processor-generated leader skill text and produces a list of conditions."""
-    skill_text = skill_text.lower()
+    if not child:
+        skill = skill.jp_skill
     results = set()
 
-    if 'additional heal when matching' in skill_text:
-        results.add(LsCondition.AUTO_HEAL)
+    if isinstance(skill, LSMultiPartSkill):
+        for s in skill.parts:
+            results |= parse_ls_conditions(s, True)
 
-    # Strip out stuff like 0.25x because there's no reduction category,
-    # don't want it to match for enhanced categories.
-    skill_mod = re.sub(r'0[.]\d+x', ' ', skill_text)
-    skill_mod = skill_mod.replace('x rcv additional heal', '')
-
-    hp, atk, rcv = False, False, False
-    if 'x all stats' in skill_mod:
-        hp, atk, rcv = True, True, True
-    if 'x hp & atk' in skill_mod:
-        hp, atk = True, True
-    if 'x hp & rcv' in skill_mod:
-        hp, rcv = True, True
-    if 'x atk & rcv' in skill_mod:
-        atk, rcv = True, True
-    if 'x hp' in skill_mod:
-        hp = True
-    if 'x atk' in skill_mod:
-        atk = True
-    if 'x rcv' in skill_mod:
-        rcv = True
-
-    if hp:
-        if atk:
-            if rcv:
-                results.add(LsCondition.ENHANCED_HP_ATK_RCV)
+    if child:
+        pass
+    elif skill.hp > 1:
+        if skill.atk > 1:
+            if skill.rcv > 1:
+                results.add(LSCondition.ENHANCED_HP_ATK_RCV)
             else:
-                results.add(LsCondition.ENHANCED_HP_ATK)
-        elif rcv:
-            results.add(LsCondition.ENHANCED_HP_RCV)
+                results.add(LSCondition.ENHANCED_HP_ATK)
+        elif skill.rcv > 1:
+            results.add(LSCondition.ENHANCED_HP_RCV)
         else:
-            results.add(LsCondition.ENHANCED_HP)
-    elif atk:
-        if rcv:
-            results.add(LsCondition.ENHANCED_ATK_RCV)
+            results.add(LSCondition.ENHANCED_HP)
+    elif skill.atk > 1:
+        if skill.rcv > 1:
+            results.add(LSCondition.ENHANCED_ATK_RCV)
         else:
-            results.add(LsCondition.ENHANCED_ATK)
-    elif rcv:
-        results.add(LsCondition.ENHANCED_RCV)
+            results.add(LSCondition.ENHANCED_ATK)
+    elif skill.rcv > 1:
+        results.add(LSCondition.ENHANCED_RCV)
 
-    if 'reduce damage taken' in skill_text:
-        results.add(LsCondition.REDUCE_DAMAGE)
+    if skill.shield > 0:
+        results.add(LSCondition.REDUCE_DAMAGE)
 
-    if 'additional damage when matching' in skill_text:
-        results.add(LsCondition.ADDITIONAL_ATTACK)
+    if isinstance(skill, LSAutoheal):
+        results.add(LSCondition.AUTO_HEAL)
 
-    if 'counterattack' in skill_text:
-        results.add(LsCondition.COUNTERATTACK)
+    if isinstance(skill, (LSBonusAttack, LSRainbowBonusDamage, LSBlobBonusDamage, LSColorComboBonusDamage)):
+        results.add(LSCondition.ADDITIONAL_ATTACK)
 
-    if 'may survive when hp is reduced to 0' in skill_text:
-        results.add(LsCondition.RESOLVE)
+    if isinstance(skill, LSCounterattack):
+        results.add(LSCondition.COUNTERATTACK)
 
-    if 'increase orb movement time' in skill_text:
-        results.add(LsCondition.EXTEND_TIME)
+    if isinstance(skill, LSResolve):
+        results.add(LSCondition.RESOLVE)
 
-    if 'x coin drop rate' in skill_text:
-        results.add(LsCondition.COIN)
+    if isinstance(skill, (LSMovementTimeIncrease, LSBonusTimeStatBoost)):
+        results.add(LSCondition.EXTEND_TIME)
 
-    if 'x egg drop rate' in skill_text:
-        results.add(LsCondition.EGG)
+    if isinstance(skill, LSCoinDropBoost):
+        results.add(LSCondition.COIN)
 
-    if 'x rank exp' in skill_text:
-        results.add(LsCondition.EXP)
+    if isinstance(skill, LSEggDropRateBoost):
+        results.add(LSCondition.EGG)
 
-    if 'board becomes 7x6' in skill_text:
-        results.add(LsCondition.BOARD_CHANGE_7X6)
+    if isinstance(skill, LSRankXpBoost):
+        results.add(LSCondition.EXP)
 
-    if 'no skyfall' in skill_text:
-        results.add(LsCondition.NO_SKYFALL_COMBOS)
+    if isinstance(skill, (LSSevenBySix, LSSevenBySixStatBoost)):
+        results.add(LSCondition.BOARD_CHANGE_7X6)
 
-    etc_text = [
-        'taiko',
-        'power-up',
-        'fuse',
-        'sells for',
-        'special evo material',
-        'monster points',
-    ]
-    if any([x in skill_text for x in etc_text]):
-        results.add(LsCondition.ETC)
+    if isinstance(skill, (LSNoSkyfallBoost, LSOrbRemainingMultiplier)):
+        results.add(LSCondition.NO_SKYFALL_COMBOS)
 
-    return results
+    if isinstance(skill, LSTaikoDrum):
+        results.add(LSCondition.ETC)
+
+    if child:
+        return results
+    return sorted(results, key=lambda x:x.value)

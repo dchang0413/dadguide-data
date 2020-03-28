@@ -7,18 +7,18 @@ from typing import List, Optional, Union
 
 from pad.common import dungeon_types, pad_util
 from pad.common.shared_types import MonsterId, DungeonId
-from pad.raw import Dungeon, EnemySkill, ESRef
+from pad.raw import Dungeon, EnemySkill
 from pad.raw.dungeon import SubDungeon
 from pad.raw.skills import skill_text_typing
 from pad.raw.skills.active_skill_info import ActiveSkill
-from pad.raw.skills.en_active_skill_text import EnAsTextConverter
-from pad.raw.skills.en_leader_skill_text import EnLsTextConverter
+from pad.raw.skills.en.active_skill_text import EnASTextConverter
+from pad.raw.skills.enemy_skill_info import ESInstance, ESUnknown
 from pad.raw.skills.leader_skill_info import LeaderSkill
-from pad.raw.skills.skill_text_typing import AsCondition, LsCondition
-from pad.raw_processor.merged_data import MergedCard, MergedEnemySkill
+from pad.raw_processor.merged_data import MergedCard
 from pad.raw_processor.merged_database import Database
 
 fail_logger = logging.getLogger('processor_failures')
+human_fix_logger = logging.getLogger('human_fix')
 
 
 class CrossServerCard(object):
@@ -40,15 +40,10 @@ class CrossServerCard(object):
         self.leader_skill = make_cross_server_skill(jp_card.leader_skill, na_card.leader_skill, kr_card.leader_skill)
         self.active_skill = make_cross_server_skill(jp_card.active_skill, na_card.active_skill, kr_card.active_skill)
 
-        self.enemy_behavior = make_cross_server_enemy_behavior(jp_card.enemy_skills, na_card.enemy_skills)
-
-        # This is mostly just for integration test purposes. Should really be fixed a different way.
-        self.en_ls_text = None
-        self.en_as_text = None
-
-    def load_text(self):
-        self.en_ls_text = self.leader_skill.jp_skill.full_text(EnLsTextConverter()) if self.leader_skill else None
-        self.en_as_text = self.active_skill.jp_skill.full_text(EnAsTextConverter()) if self.active_skill else None
+        self.enemy_behavior = make_cross_server_enemy_behavior(jp_card.enemy_skills,
+                                                               na_card.enemy_skills,
+                                                               kr_card.enemy_skills)
+        self.gem = None
 
 
 def build_cross_server_cards(jp_database, na_database, kr_database) -> List[CrossServerCard]:
@@ -69,6 +64,33 @@ def build_cross_server_cards(jp_database, na_database, kr_database) -> List[Cros
             combined_cards.append(csc)
         elif err_msg:
             fail_logger.debug('Skipping card, %s', err_msg)
+
+    # Post-Processing
+    jp_gems = {}
+    na_gems = {}
+    for card in combined_cards[4468:]:
+        if card.jp_card.card.name.endswith('の希石') or \
+                card.na_card.card.name.endswith("'s Gem"):
+            jp_gems[card.jp_card.card.name[:-3]] = card
+            na_gems[card.na_card.card.name[:-6]] = card
+
+    for card in combined_cards:
+        card.gem = jp_gems.get(card.jp_card.card.name) or \
+                   na_gems.get(card.na_card.card.name)
+        if card.gem:
+            for jc in jp_gems:
+                if jp_gems[jc] == card.gem:
+                    jp_gems.pop(jc)
+                    break
+            for nc in na_gems:
+                if na_gems[nc] == card.gem:
+                    na_gems.pop(nc)
+                    break
+
+    jp_gems.update(na_gems)
+    aggreg = jp_gems.keys()
+    if aggreg:
+        human_fix_logger.warning("Unassigned Gem(s): " + ', '.join(aggreg))
 
     return combined_cards
 
@@ -121,6 +143,11 @@ def make_cross_server_card(jp_card: MergedCard,
     jp_card = override_if_necessary(na_card, jp_card)
     kr_card = override_if_necessary(na_card, kr_card)
 
+    # What the hell gungho. This showed up (104955) only in Korea.
+    if kr_card is not None and na_card is None and jp_card is None:
+        jp_card = kr_card
+        na_card = kr_card
+
     if is_bad_name(jp_card.card.name):
         # This is a debug monster, or not yet supported
         return None, 'Debug monster'
@@ -128,32 +155,66 @@ def make_cross_server_card(jp_card: MergedCard,
     return CrossServerCard(jp_card.monster_id, jp_card, na_card, kr_card), None
 
 
-def make_cross_server_enemy_behavior(jp_skills: List[MergedEnemySkill],
-                                     na_skills: List[MergedEnemySkill]) -> List[ESRef]:
-    """Creates enemy data by combining the JP enemy info with the NA enemy info."""
+class CrossServerESInstance(object):
+    """A per-monster skill info across servers.
+
+    Not sure why we need both of these.
+    """
+
+    def __init__(self, jp_skill: ESInstance, na_skill: ESInstance, kr_skill: ESInstance):
+        self.enemy_skill_id = (jp_skill or na_skill or kr_skill).enemy_skill_id
+        self.jp_skill = jp_skill
+        self.na_skill = na_skill
+        self.kr_skill = kr_skill
+
+
+def make_cross_server_enemy_behavior(jp_skills: List[ESInstance],
+                                     na_skills: List[ESInstance],
+                                     kr_skills: List[ESInstance]) -> List[CrossServerESInstance]:
+    """Creates enemy data by combining the JP/NA/KR enemy info."""
     jp_skills = list(jp_skills) or []
     na_skills = list(na_skills) or []
+    kr_skills = list(kr_skills) or []
 
     if len(jp_skills) > len(na_skills):
-        return jp_skills
-    elif len(na_skills) > len(jp_skills):
-        return na_skills
-    elif not na_skills and not jp_skills:
-        return []
+        na_skills = jp_skills
+    if len(na_skills) > len(jp_skills):
+        jp_skills = na_skills
+    if len(na_skills) > len(kr_skills):
+        kr_skills = na_skills
 
-    def override_if_necessary(override_skills: List[MergedEnemySkill], dest_skills: List[MergedEnemySkill]):
+    def override_if_necessary(override_skills: List[ESInstance], dest_skills: List[ESInstance]):
         # Then check if we need to individually overwrite
         for idx in range(len(override_skills)):
-            override_skill = override_skills[idx].enemy_skill
-            dest_skill = dest_skills[idx].enemy_skill
-            if override_skill == _compare_named(override_skill, dest_skill):
+            override_skill = override_skills[idx].behavior
+
+            dest_skill = dest_skills[idx].behavior
+            if override_skill is _compare_named(override_skill, dest_skill):
                 dest_skills[idx] = override_skills[idx]
 
     # Override priority: JP > NA, NA -> JP
     override_if_necessary(jp_skills, na_skills)
     override_if_necessary(na_skills, jp_skills)
+    override_if_necessary(na_skills, kr_skills)
 
-    return list(map(lambda s: s.enemy_skill_ref, jp_skills))
+    return _combine_es(jp_skills, na_skills, kr_skills)
+
+
+def _combine_es(jp_skills: List[ESInstance],
+                na_skills: List[ESInstance],
+                kr_skills: List[ESInstance]) -> List[CrossServerESInstance]:
+    if not len(jp_skills) == len(na_skills) and len(na_skills) == len(kr_skills):
+        raise ValueError('unexpected skill lengths')
+    results = []
+    for idx, jp_skill in enumerate(jp_skills):
+        if isinstance(jp_skill.behavior, ESUnknown):
+            human_fix_logger.error('Detected an in-use unknown enemy skill: %d/%d: %s - %s',
+                                   jp_skill.enemy_skill_id,
+                                   jp_skill.behavior.type,
+                                   jp_skill.behavior.name,
+                                   jp_skill.behavior.params)
+        results.append(CrossServerESInstance(jp_skill, na_skills[idx], kr_skills[idx]))
+    return results
 
 
 class CrossServerDungeon(object):
@@ -263,9 +324,6 @@ class CrossServerSkill(object):
         self.na_skill = na_skill
         self.kr_skill = kr_skill
 
-        self.en_text = None
-        self.skill_type_tags = []  # type: List[Union[LsCondition, AsCondition]]
-
 
 def build_cross_server_skills(jp_skills: List[EitherSkillType],
                               na_skills: List[EitherSkillType],
@@ -355,29 +413,22 @@ class CrossServerDatabase(object):
                                                        na_database.leader_skills,
                                                        kr_database.leader_skills)
 
-        ls_converter = EnLsTextConverter()
-        for ls in self.leader_skills:
-            ls.en_text = ls.jp_skill.full_text(ls_converter)
-            ls.skill_type_tags = list(skill_text_typing.parse_ls_conditions(ls.en_text))
-            ls.skill_type_tags.sort(key=lambda x: x.value)
-
         self.active_skills = build_cross_server_skills(jp_database.active_skills,
                                                        na_database.active_skills,
                                                        kr_database.active_skills)
 
-        as_converter = EnAsTextConverter()
+        en_as_converter = EnASTextConverter()
         for ask in self.active_skills:
-            ask.en_text = ask.jp_skill.full_text(as_converter)
-            ask.skill_type_tags = list(skill_text_typing.parse_as_conditions(ask.en_text))
+            ask.skill_type_tags = list(skill_text_typing.parse_as_conditions(ask))
             ask.skill_type_tags.sort(key=lambda x: x.value)
 
         self.dungeons = build_cross_server_dungeons(jp_database,
                                                     na_database,
                                                     kr_database)  # type: List[CrossServerDungeon]
 
-        self.enemy_skills = build_cross_server_enemy_skills(jp_database.enemy_skills,
-                                                            na_database.enemy_skills,
-                                                            kr_database.enemy_skills)
+        self.enemy_skills = build_cross_server_enemy_skills(jp_database.raw_enemy_skills,
+                                                            na_database.raw_enemy_skills,
+                                                            kr_database.raw_enemy_skills)
 
         self.jp_bonuses = jp_database.bonuses
         self.na_bonuses = na_database.bonuses
@@ -390,10 +441,10 @@ class CrossServerDatabase(object):
         self.jp_egg_machines = jp_database.egg_machines
         self.na_egg_machines = na_database.egg_machines
         self.kr_egg_machines = kr_database.egg_machines
-        
-        self.jp_exchange = jp_database.exchange
-        self.na_exchange = na_database.exchange
-        self.kr_exchange = kr_database.exchange
+
+        self.jp_purchase = jp_database.purchase
+        self.na_purchase = na_database.purchase
+        self.kr_purchase = kr_database.purchase
 
         self.monster_id_to_card = {c.monster_id: c for c in self.all_cards}
         self.leader_id_to_leader = {s.skill_id: s for s in self.leader_skills}
@@ -408,7 +459,6 @@ class CrossServerDatabase(object):
                 csc.leader_skill = self.leader_id_to_leader[csc.leader_skill.skill_id]
             if csc.active_skill:
                 csc.active_skill = self.active_id_to_active[csc.active_skill.skill_id]
-            csc.load_text()
 
     def card_by_monster_id(self, monster_id: MonsterId) -> CrossServerCard:
         return self.monster_id_to_card.get(monster_id, None)
@@ -445,91 +495,3 @@ class CrossServerDatabase(object):
         self.save(output_dir, 'jp_bonuses', self.jp_bonuses, pretty)
         self.save(output_dir, 'na_bonuses', self.na_bonuses, pretty)
         self.save(output_dir, 'kr_bonuses', self.kr_bonuses, pretty)
-
-    # TODO: move this to another file
-    # TODO: check with KR data
-    def card_diagnostics(self):
-        print('checking', len(self.all_cards), 'cards')
-        for c in self.all_cards:
-            jpc = c.jp_card
-            nac = c.na_card
-            krc = c.kr_card
-
-            if jpc.card.type_1_id != nac.card.type_1_id:
-                print('type1 failure: {} - {} {}'.format(nac.card.name, jpc.card.type_1_id, nac.card.type_1_id))
-
-            if jpc.card.type_2_id != nac.card.type_2_id:
-                print('type2 failure: {} - {} {}'.format(nac.card.name, jpc.card.type_2_id, nac.card.type_2_id))
-
-            if jpc.card.type_3_id != nac.card.type_3_id:
-                print('type3 failure: {} - {} {}'.format(nac.card.name, jpc.card.type_3_id, nac.card.type_3_id))
-
-            if krc.card.type_1_id != nac.card.type_1_id:
-                print('kr type1 failure: {} - {} {}'.format(nac.card.name, krc.card.type_1_id, nac.card.type_1_id))
-
-            if krc.card.type_2_id != nac.card.type_2_id:
-                print('kr type2 failure: {} - {} {}'.format(nac.card.name, krc.card.type_2_id, nac.card.type_2_id))
-
-            if krc.card.type_3_id != nac.card.type_3_id:
-                print('kr type3 failure: {} - {} {}'.format(nac.card.name, krc.card.type_3_id, nac.card.type_3_id))
-
-            jpcas = jpc.active_skill
-            nacas = nac.active_skill
-            krcas = krc.active_skill
-            if jpcas and nacas and jpcas.skill_id != nacas.skill_id:
-                print('active skill failure: {} - {} / {}'.format(nac.card.name, jpcas.skill_id, nacas.skill_id))
-            if krcas and nacas and krcas.skill_id != nacas.skill_id:
-                print('active skill failure: {} - {} / {}'.format(nac.card.name, krcas.skill_id, nacas.skill_id))
-
-            jpcls = jpc.leader_skill
-            nacls = nac.leader_skill
-            krcls = krc.leader_skill
-            if jpcls and nacls and jpcls.skill_id != nacls.skill_id:
-                print('leader skill failure: {} - {} / {}'.format(nac.card.name, jpcls.skill_id, nacls.skill_id))
-            if krcls and nacls and krcls.skill_id != nacls.skill_id:
-                print('leader skill failure: {} - {} / {}'.format(nac.card.name, krcls.skill_id, nacls.skill_id))
-
-            if len(jpc.card.awakenings) != len(nac.card.awakenings):
-                print('awakening : {} - {} / {}'.format(nac.card.name,
-                                                        len(jpc.card.awakenings),
-                                                        len(nac.card.awakenings)))
-
-            if len(krc.card.awakenings) != len(nac.card.awakenings):
-                print('awakening : {} - {} / {}'.format(nac.card.name,
-                                                        len(krc.card.awakenings),
-                                                        len(nac.card.awakenings)))
-
-            if len(jpc.card.super_awakenings) != len(nac.card.super_awakenings):
-                print('super awakening : {} - {} / {}'.format(nac.card.name,
-                                                              len(jpc.card.super_awakenings),
-                                                              len(nac.card.super_awakenings)))
-
-            if len(krc.card.super_awakenings) != len(nac.card.super_awakenings):
-                print('super awakening : {} - {} / {}'.format(nac.card.name,
-                                                              len(krc.card.super_awakenings),
-                                                              len(nac.card.super_awakenings)))
-
-    def dungeon_diagnostics(self):
-        print('checking', len(self.dungeons), 'dungeons')
-        for d in self.dungeons:
-            jpd = d.jp_dungeon
-            nad = d.na_dungeon
-            krd = d.kr_dungeon
-
-            if len(jpd.sub_dungeons) != len(nad.sub_dungeons):
-                print('Floor count failure: {} / {} - {} / {}'.format(jpd.clean_name, nad.clean_name,
-                                                                      len(jpd.sub_dungeons),
-                                                                      len(nad.sub_dungeons)))
-
-            if len(krd.sub_dungeons) != len(nad.sub_dungeons):
-                print('Floor count failure: {} / {} - {} / {}'.format(krd.clean_name, nad.clean_name,
-                                                                      len(krd.sub_dungeons),
-                                                                      len(nad.sub_dungeons)))
-
-            if jpd.full_dungeon_type != nad.full_dungeon_type:
-                print('Dungeon type failure: {} / {} - {} / {}'.format(jpd.clean_name, nad.clean_name,
-                                                                       jpd.full_dungeon_type, nad.full_dungeon_type))
-
-            if krd.full_dungeon_type != nad.full_dungeon_type:
-                print('Dungeon type failure: {} / {} - {} / {}'.format(krd.clean_name, nad.clean_name,
-                                                                       krd.full_dungeon_type, nad.full_dungeon_type))

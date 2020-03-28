@@ -1,5 +1,6 @@
 import decimal
 import time
+import binascii
 from datetime import datetime, date
 from enum import Enum
 
@@ -33,6 +34,8 @@ def _value_to_sql_param(v):
         return "'{}'".format(v.replace(tzinfo=None).isoformat())
     elif type(v) in [bool]:
         return str(v)
+    elif type(v) == bytes:
+        return '0x' + binascii.hexlify(bytearray(v)).decode('ascii')
     else:
         return None
 
@@ -107,6 +110,7 @@ class ExistsStrategy(Enum):
     BY_KEY = 1
     BY_VALUE = 2
     CUSTOM = 3  # Prevents mistaken 'standard' inserts; requires a force method
+    BY_KEY_IF_SET = 4
 
 
 class SqlItem(Printable):
