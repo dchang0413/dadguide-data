@@ -338,8 +338,8 @@ class EnLSTextConverter(EnBaseTextConverter):
         return skill_text
 
     def color_combo_bonus_damage_text(self, ls):
-        if ls.attributes[1:] != ls[:-1]:
-            skill_text = '{} additional damage when matching {}'.format(self.fmt_multi_attr(list(set(ls.attributes)), conj='and'))
+        if len(ls.attributes) and ls.attributes[1:] != ls.attributes[:-1]:
+            skill_text = '{} additional damage when matching {}'.format(ls.bonus_damage, self.fmt_multi_attr(list(set(ls.attributes)), conj='and'))
         else:
             skill_text = '{} additional damage when matching {} or more'.format(ls.bonus_damage, ls.min_combo)
             if ls.attributes:
