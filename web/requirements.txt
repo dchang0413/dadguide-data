@@ -1,0 +1,11 @@
+requests
+git+https://github.com/nachoapps/padtools.git
+pytz
+bs4
+pyyaml
+protobuf
+pymysql
+sanic
+sanic-cors
+sanic_compress
+fake_useragent

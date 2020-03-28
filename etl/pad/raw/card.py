@@ -1,11 +1,13 @@
 """
 Parses card data.
 """
-
-from typing import List, Any
+import logging
+from typing import List, Any, Optional
 
 from pad.common import pad_util
 from pad.common.shared_types import AttrId, MonsterNo, SkillId, TypeId, Curve
+
+human_fix_logger = logging.getLogger('human_fix')
 
 # The typical JSON file name for this data.
 FILE_NAME = 'download_card_data.json'
@@ -16,7 +18,9 @@ class ESRef(pad_util.Printable):
 
     def __init__(self, enemy_skill_id: int, enemy_ai: int, enemy_rnd: int):
         self.enemy_skill_id = enemy_skill_id
+        # This is an additive amount under a specific threshold?
         self.enemy_ai = enemy_ai
+        # Seems like this is the base chance for an action
         self.enemy_rnd = enemy_rnd
 
 
@@ -123,7 +127,6 @@ class Card(pad_util.Printable):
         # When >0, the enemy turn timer for technical dungeons.
         self.enemy_turns_alt = int(raw[51])
 
-
         # Controls whether the monster uses the 'new' AI or the 'old' AI.
         # Monsters using the old  AI only have support up to some limit of ES values.
         # One main difference between is behavior during preempts; old-AI monsters will
@@ -149,7 +152,7 @@ class Card(pad_util.Printable):
         # Deus Ex Machina has 2, Kanna has 7.
         self.enemy_skill_counter_increment = int(raw[54])
 
-        # Boolean, unlikely to be anything useful, only populated for 495 and 111.
+        # Boolean, unlikely to be anything useful, only populated for 495 (1) and 111 (1000).
         self.unknown_055 = raw[55]
 
         # Unused
@@ -171,10 +174,20 @@ class Card(pad_util.Printable):
         self.latent_on_feed = int(raw[64])
         self.collab_id = int(raw[65])
 
-        # Bitmap with some random flag values, not sure what they all do.
-        self.random_flags = int(raw[66])
-        self.inheritable = bool(self.random_flags & 1)
-        self.is_collab = bool(self.random_flags & 4)
+        # Bitmap with some non-random flag values
+        self.flags = int(raw[66])
+        self.inheritable_flag = bool(self.flags & 1)
+        self.take_assists_flag = bool(self.flags & 2)
+        self.is_collab_flag = bool(self.flags & 4)
+        self.unstackable_flag = bool(self.flags & 8)
+        self.assist_only_flag = bool(self.flags & 16)
+        self.latent_slot_unlock_flag = bool(self.flags & 32)
+
+        # Composed with flags and other monster attributes
+        self.inheritable = bool(self.inheritable_flag and self.active_skill_id)
+        self.take_assists = bool(self.take_assists_flag and self.active_skill_id)
+        self.is_stackable = bool(not self.unstackable_flag and self.type_1_id in [0, 12, 14])
+        self.usable = bool(not self.assist_only_flag and self.monster_no < 100000)
 
         self.furigana = str(raw[67])  # JP data only?
         self.limit_mult = int(raw[68])
@@ -185,7 +198,17 @@ class Card(pad_util.Printable):
         # Number of the orb skin unlocked, 1-indexed, 0 if no orb skin
         self.orb_skin_id = int(raw[70])
 
-        self.other_fields = raw[71:]
+        # Seems like this could have multiple values. Only value so far is: 'link:5757'
+        self.tags = raw[71]
+        self.linked_monster_no = None  # type: Optional[MonsterNo]
+
+        if self.tags:
+            if 'link:' in self.tags:
+                self.linked_monster_no = MonsterNo(int(self.tags[len('link:'):]))
+            else:
+                human_fix_logger.error('Unexpected tag value: %s', self.tags)
+
+        self.other_fields = raw[72:]
 
     def enemy(self) -> Enemy:
         return Enemy(self.enemy_turns,

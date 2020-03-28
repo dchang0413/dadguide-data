@@ -1,6 +1,6 @@
 import math
 from enum import Enum
-from typing import NewType, Dict, Any
+from typing import NewType, Dict, Any, List
 
 # Raw data types
 AttrId = NewType('AttrId', int)
@@ -15,6 +15,7 @@ MonsterId = NewType('MonsterId', int)
 
 # General purpose types
 JsonType = Dict[str, Any]
+ListJsonType = List[Dict[str, Any]]
 
 
 class Printable(object):
@@ -49,6 +50,11 @@ class Server(Enum):
     jp = 0
     na = 1
     kr = 2
+
+    @staticmethod
+    def from_str(name: str):
+        name = str(name).lower()
+        return Server[name]
 
 
 class StarterGroup(Enum):

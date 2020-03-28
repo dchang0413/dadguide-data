@@ -19,19 +19,23 @@ class SubDungeon(pad_util.Printable):
 
     def __init__(self, dungeon_id: DungeonId, raw: List[Any]):
         self.sub_dungeon_id = SubDungeonId(dungeon_id * 1000 + int(raw[0]))
+        self.simple_sub_dungeon_id = int(raw[0])
         self.raw_name = raw[1]
         self.clean_name = pad_util.strip_colors(self.raw_name)
         self.floors = int(raw[2])
-        self.rflags1 = raw[3]
+        self.rflags1 = int(raw[3])
         self.stamina = raw[4]
         self.bgm1 = raw[5]
         self.bgm2 = raw[6]
         self.rflags2 = int(raw[7])
 
+        # If monsters can use skills in this dungeon.
+        self.technical = self.rflags1 & 0x80 > 0
+
         # This next loop runs through the elements from raw[8] until it hits a 0. The 0 indicates the end of the list
         # of drops for the floor, the following segments are the dungeon modifiers
         pos = 8
-        while int(raw[pos]) is not 0:
+        while int(raw[pos]) != 0:
             pos += 1
         pos += 1
 
@@ -107,8 +111,9 @@ class SubDungeon(pad_util.Printable):
             i += 1
             # self.properties = self.remaining_fields[i++].split('|');
 
+
 def __str__(self):
-        return 'SubDungeon({} - {})'.format(self.sub_dungeon_id, self.clean_name)
+    return 'SubDungeon({} - {})'.format(self.sub_dungeon_id, self.clean_name)
 
 
 prefix_to_dungeontype = {
@@ -142,7 +147,7 @@ class Dungeon(pad_util.Printable):
         self.clean_name = pad_util.strip_colors(self.name)
 
         # Basic dungeon type computed by scanning the name for flags.
-        self.dungeon_type = None # type: Optional[str]
+        self.dungeon_type = None  # type: Optional[str]
 
         # A more detailed dungeon type.
         self.full_dungeon_type = dungeon_types.RawDungeonType(int(raw[3]))

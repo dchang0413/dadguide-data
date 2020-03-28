@@ -16,8 +16,8 @@ exported database and install it into your local copy.
 
 In prod we're using a Apache webserver with PHP that executes a python script. Kind of gross.
 
-In dev we're using a sanic webserver (requires python 3.6 and sanic_compress). It would be nice
-to start using this in prod using mod_proxy? 
+In dev we're using a sanic webserver (requires python 3.6 and sanic\_compress). It would be nice
+to start using this in prod using mod\_proxy? 
 
 ## Integration tests
 
@@ -55,3 +55,16 @@ gsutil -m cp -r -c pad_data/raw gs://dadguide-integration/parser/raw
 It would be really great to have a version that either did the mysql data load, or a sqlite one, or
 maybe just dumps the computed SQL to a file. The latter is probably not sufficient, since some steps
 require index lookups and we would have to fake those.
+
+### Docker based development
+
+In the `docker` directory are utilities to help you get working faster. You can download the database
+backup from production, start a mysql container, and restore the backup with a single command:
+
+```bash
+docker/start_env.sh
+```
+
+TODO: start the sanic webserver as well for ease of dadguide-flutter dev work
+
+TODO: docker script to launch the pipeline against the docker env

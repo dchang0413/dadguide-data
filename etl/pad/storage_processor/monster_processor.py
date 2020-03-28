@@ -14,42 +14,42 @@ class MonsterProcessor(object):
         self.data = data
 
     def process(self, db: DbWrapper):
-        logger.warning('loading monster data')
+        logger.info('loading monster data')
         self._process_skills(db)
         self._process_monsters(db)
         self._process_monster_images(db)
         self._process_awakenings(db)
         self._process_evolutions(db)
-        logger.warning('done loading monster data')
+        logger.info('done loading monster data')
 
     def _process_skills(self, db: DbWrapper):
-        logger.warning('loading skills for %s cards', len(self.data.ownable_cards))
+        logger.info('loading skills for %s cards', len(self.data.ownable_cards))
         ls_count = 0
         as_count = 0
         for csc in self.data.ownable_cards:
             card_ls = csc.leader_skill
             if card_ls:
                 ls_count += 1
-                db.insert_or_update(LeaderSkill.from_ls(card_ls.jp_skill, card_ls.na_skill, card_ls.kr_skill))
+                db.insert_or_update(LeaderSkill.from_css(card_ls))
             card_as = csc.active_skill
             if card_as:
                 as_count += 1
-                db.insert_or_update(ActiveSkill.from_as(card_as.jp_skill, card_as.na_skill, card_as.kr_skill))
+                db.insert_or_update(ActiveSkill.from_css(card_as))
 
-        logger.warning('loaded %s leader skills and %s active skills', ls_count, as_count)
+        logger.info('loaded %s leader skills and %s active skills', ls_count, as_count)
 
     def _process_monsters(self, db):
-        logger.warning('loading %s monsters', len(self.data.ownable_cards))
+        logger.info('loading %s monsters', len(self.data.ownable_cards))
         for m in self.data.ownable_cards:
             item = Monster.from_csm(m)
             db.insert_or_update(item)
 
     def _process_monster_images(self, db):
-        logger.warning('monster images, hq_count=%s, anim_count=%s',
-                       len(self.data.hq_image_monster_ids),
-                       len(self.data.animated_monster_ids))
+        logger.info('monster images, hq_count=%s, anim_count=%s',
+                    len(self.data.hq_image_monster_ids),
+                    len(self.data.animated_monster_ids))
         if not self.data.hq_image_monster_ids or not self.data.animated_monster_ids:
-            logger.warning('skipping image info load')
+            logger.info('skipping image info load')
             return
         for csm in self.data.ownable_cards:
             item = MonsterWithExtraImageInfo(monster_id=csm.monster_id,
@@ -58,18 +58,26 @@ class MonsterProcessor(object):
             db.insert_or_update(item)
 
     def _process_awakenings(self, db):
-        logger.warning('loading awakenings')
+        logger.info('loading awakenings')
         for m in self.data.ownable_cards:
             items = Awakening.from_csm(m)
             for item in items:
                 try:
                     db.insert_or_update(item)
+                except (KeyboardInterrupt, SystemExit):
+                    raise
                 except:
                     human_fix_logger.fatal('Failed to insert item (probably new awakening): %s',
                                            pad_util.json_string_dump(item, pretty=True))
 
+            sql = 'SELECT COUNT(*) FROM awakenings WHERE monster_id = {}'.format(m.monster_id)
+            stored_awakening_count = db.get_single_value(sql, op=int)
+            if len(items) < stored_awakening_count:
+                human_fix_logger.error('Incorrect awakening count for %s, got %s wanted %s',
+                                       m.monster_id, stored_awakening_count, len(items))
+
     def _process_evolutions(self, db):
-        logger.warning('loading evolutions')
+        logger.info('loading evolutions')
         for m in self.data.ownable_cards:
             if not m.jp_card.card.ancestor_id:
                 continue
